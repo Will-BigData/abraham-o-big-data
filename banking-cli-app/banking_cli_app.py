@@ -1,7 +1,8 @@
+from decimal import Decimal, ROUND_DOWN
 import sys
-import os
-from models import Bank
-from exceptions import InvalidNameError, InvalidEntryError, InsufficientFundsError, FileLoadError, FileSaveError
+from models import Bank, Account
+from mysql.connector import Error
+from exceptions import DuplicateAccountError, AccountRetrievalError, InvalidEntryError, AccountNotFoundError, InsufficientFundsError, TransactionError
 
 
 class Handler:
@@ -9,8 +10,6 @@ class Handler:
         self.bank = Bank()
 
     def run(self):
-
-        self.load_data()
 
         available_options = {
             '1': self.handle_open_new_account,
@@ -22,14 +21,14 @@ class Handler:
         }
         
         while True:
-            self.display_menu()
+            self.cli_options()
             choice = input("Choose an option [1 - 6]: ")
             if choice in available_options:
                 available_options[choice]()
             else:
                 print("Invalid option. Please choose again.")
     
-    def display_menu(self):
+    def cli_options(self):
         print("\nWelcome to CLI Banking App")
         print("1. Open A New Account")
         print("2. Make A Deposit")
@@ -41,55 +40,51 @@ class Handler:
     def handle_open_new_account(self):
         name = input("Enter your name: ")
         try:
-            account = self.bank.create_account(name)
-            if account is not None:
-                try:
-                    initial_balance = input("Enter initial deposit amount: ")
-                    account.deposit(initial_balance)
-                    print(f"Account created with ID: {account.account_id}, Name: {account.name}")
-                except InvalidEntryError as e:
-                    print(e.message)
-            
-            else: print("Returning to main menu.")
-        except InvalidNameError as e:
+            account_id = self.bank.create_account(name)
+            if account_id:
+                print(f"Account created successfully for {name}. Account ID: {account_id}")
+        except (DuplicateAccountError, Error) as e:
             print(e.message)
-        except InvalidEntryError as e:
-            print("Invalid input. Please try again.")
 
     def handle_make_deposit(self):
         try:
-            account = self.find_account_by_id()
+            account_id = input("Enter account ID: ")
+            account = Account.get_account(account_id) 
             if account:
                 amount = input("Enter deposit amount: ")
-                account.deposit(amount)
-                print(f"Deposited {amount}. New balance: {account.get_balance()}")
-        except InvalidEntryError as e:
-            print(e.message)       
+   
+                balance = self.bank.deposit(account_id, amount)
+
+                print(f"Deposited {float(amount)}. New balance: {balance.quantize(Decimal('0.00'), rounding=ROUND_DOWN)}")
+
+        except (InvalidEntryError, AccountNotFoundError, TransactionError) as e:
+            print(e.message)  
 
     def handle_make_withdrawal(self):
         try:
-            account = self.find_account_by_id()
+            account_id = input("Enter account ID: ")
+            account = Account.get_account(account_id)
             if account:
                 amount = input("Enter withdrawal amount: ")
-                account.withdraw(amount)
-                print(f"Withdrew {amount}. New balance: ${account.get_balance():.2f}")
-        except InvalidEntryError as e:
-            print(e.message)
-        except InsufficientFundsError as e:
+                balance = self.bank.withdraw(account_id, amount)
+
+                print(f"Withdrew {amount}. New balance: ${balance.quantize(Decimal('0.00'), rounding=ROUND_DOWN)}")
+        except (InvalidEntryError, AccountNotFoundError, InsufficientFundsError, TransactionError) as e:
             print(e.message)
 
     def handle_get_balance(self):
         try:
-            account = self.find_account_by_id()
+            account_id = input("Enter account ID: ")
+            account = Account.get_account(account_id)
             if account:
-                print(f"Account balance: {account.get_balance()}")
-        except InvalidEntryError as e:
+                print(f"Account balance: {account[2].quantize(Decimal('0.00'), rounding=ROUND_DOWN)}")
+        except (InvalidEntryError, AccountNotFoundError, TransactionError) as e:
             print(e.message)
 
     def handle_apply_for_mortgage(self):
-        name = input("Enter your name: ")
-        result = self.bank.apply_for_mortgage(name)
-        print(result)
+            account_id = input("Enter account ID: ")
+            result = self.bank.apply_for_mortgage(account_id)
+            print(result)
 
     def exit_program(self):
         print("Would you like a receipt? (yes/no)")
@@ -98,37 +93,15 @@ class Handler:
             self.print_receipt()
         print("Exiting the program...")
         print("Goodbye!")
-        self.save_data()
         sys.exit()
 
     def print_receipt(self):
-        name = input("Please enter your name for the receipt: ")
-        receipt_filename = 'datasource/receipt.json'
-
-        os.makedirs(os.path.dirname(receipt_filename), exist_ok=True)
-        self.bank.print_receipt(name, receipt_filename)
-
-    def find_account_by_id(self): 
+        name = input("Enter your name: ")
+        account_id = input("Enter your account ID: ")
+        receipt_filepath = 'datasource/receipt.json'
         try:
-            account_id_input = input("Enter account ID: ")
-            account_id = int(account_id_input)
-            account = self.bank.get_account(account_id)
-            if not account:
-                print("Account not found")
-            return account
-        except ValueError:   
-            raise InvalidEntryError(value = account_id_input, message = "Account ID must be a valid integer")
-
-    def load_data(self):
-        try:
-            self.bank.load_account_data_from_csv_file('datasource/accounts.csv')
-        except FileLoadError as e:
-            print(e.message)
-
-    def save_data(self):
-        try:
-            self.bank.save_account_data_to_csv_file('datasource/accounts.csv')
-        except FileSaveError as e:
+            self.bank.print_receipt(name, account_id, receipt_filepath)
+        except (AccountNotFoundError, AccountRetrievalError) as e:
             print(e.message)
 
 if __name__ == "__main__":
